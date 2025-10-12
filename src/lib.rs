@@ -20,6 +20,27 @@ limitations under the License.
 //! NMEA 0183 standard. The parser supports AIS class A and B types. It also identifies GPS,
 //! GLONASS, Galileo, BeiDou, NavIC and QZSS satellite systems.
 //!
+//! ## Tag Block Support
+//! 
+//! This parser supports NMEA 4.10 tag blocks, which provide additional metadata for NMEA sentences.
+//! Tag blocks are enclosed in backslashes and contain comma-separated fields:
+//! 
+//! ```text
+//! \g:1-2-73874,n:157036,s:r003669945,c:1241544035*4A\!AIVDM,1,1,,B,15N4cJ`005Jrek0H@9n`DW5608EP,0*13
+//! ```
+//! 
+//! Supported tag block fields:
+//! - `c` - UNIX timestamp (seconds or milliseconds)
+//! - `d` - Destination identifier (max 15 chars)
+//! - `g` - Sentence grouping (format: sentence-total-group_id)
+//! - `n` - Line count
+//! - `r` - Relative time
+//! - `s` - Source/station identifier
+//! - `t`/`i` - Text string (max 15 chars)
+//!
+//! Use `parse_sentence_with_tags()` to access tag block information, or continue using
+//! `parse_sentence()` for backward compatibility (tag blocks are ignored).
+//!
 //! Usage in a `#[no_std]` environment is also possible though an allocator is required
 
 #![forbid(unsafe_code)]
@@ -50,14 +71,41 @@ use num_traits::float::FloatCore;
 pub mod ais;
 mod error;
 pub mod gnss;
+pub mod json_output;
+pub mod tag_block;
 mod util;
 mod json_date_time_utc;
 mod json_fixed_offset;
 
 pub use error::ParseError;
+pub use tag_block::TagBlock;
 use util::*;
 
 // -------------------------------------------------------------------------------------------------
+
+/// Contains both a parsed NMEA message and any associated tag block
+#[derive(Clone, Debug, PartialEq)]
+pub struct NmeaMessage {
+    /// The parsed NMEA message
+    pub message: ParsedMessage,
+    /// Associated tag block if present
+    pub tag_block: Option<TagBlock>,
+}
+
+impl NmeaMessage {
+    /// Create a new NMEA message with optional tag block
+    pub fn new(message: ParsedMessage, tag_block: Option<TagBlock>) -> Self {
+        NmeaMessage { message, tag_block }
+    }
+    
+    /// Create a new NMEA message without tag block
+    pub fn without_tag_block(message: ParsedMessage) -> Self {
+        NmeaMessage { 
+            message, 
+            tag_block: None 
+        }
+    }
+}
 
 /// Result from function `NmeaParser::parse_sentence()`. If the given sentence represents only a
 /// partial message `ParsedMessage::Incomplete` is returned.
@@ -269,11 +317,45 @@ impl NmeaParser {
         self.saved_vsds.len()
     }
 
+    /// Parse one NMEA sentence and return the result, including any tag block information.
+    /// Multi-sentence payloads in AIS and other message types are supported. If given sentence 
+    /// is part of multi-sentence message, `ParsedMessage::Incomplete` is returned. The actual 
+    /// result is returned when all the parts have been sent to the parser.
+    pub fn parse_sentence_with_tags(&mut self, sentence: &str) -> Result<NmeaMessage, ParseError> {
+        // Check for tag block at the beginning
+        let (tag_block, nmea_sentence) = if sentence.starts_with('\\') {
+            // Find the end of the tag block
+            if let Some(end_pos) = sentence[1..].find('\\') {
+                let tag_block_str = &sentence[0..=end_pos + 1];
+                let tag_block = TagBlock::parse(tag_block_str)?;
+                let remaining = sentence[end_pos + 2..].trim_start();
+                (Some(tag_block), remaining)
+            } else {
+                return Err(ParseError::InvalidSentence(
+                    "Tag block not properly closed".to_string()
+                ));
+            }
+        } else {
+            (None, sentence)
+        };
+        
+        // Parse the NMEA sentence part
+        let parsed_message = self.parse_sentence_internal(nmea_sentence)?;
+        
+        Ok(NmeaMessage::new(parsed_message, tag_block))
+    }
+
     /// Parse NMEA sentence into `ParsedMessage` enum. If the given sentence is part of
     /// a multipart message the related state is saved into the parser and
     /// `ParsedMessage::Incomplete` is returned. The actual result is returned when all the parts
     /// have been sent to the parser.
     pub fn parse_sentence(&mut self, sentence: &str) -> Result<ParsedMessage, ParseError> {
+        let result = self.parse_sentence_with_tags(sentence)?;
+        Ok(result.message)
+    }
+
+    /// Internal function to parse the actual NMEA sentence (without tag blocks)
+    fn parse_sentence_internal(&mut self, sentence: &str) -> Result<ParsedMessage, ParseError> {
         // Shed characters prefixing the message if they exist
         let sentence = {
             if let Some(start_idx) = sentence.find(['$', '!']) {
@@ -785,4 +867,154 @@ mod test {
         vsd.mmsi = mmsi;
         vsd
     }
+
+    #[test]
+    fn test_parse_sentence_with_tag_block() {
+        let mut p = NmeaParser::new();
+        let sentence = r"\g:1-2-73874,n:157036,s:r003669945,c:1241544035*4A\!AIVDM,1,1,,B,15N4cJ`005Jrek0H@9n`DW5608EP,0*13";
+        
+        let result = p.parse_sentence_with_tags(sentence);
+        assert!(result.is_ok());
+        
+        let nmea_message = result.unwrap();
+        assert!(nmea_message.tag_block.is_some());
+        
+        let tag_block = nmea_message.tag_block.unwrap();
+        assert_eq!(tag_block.timestamp, Some(1241544035));
+        assert_eq!(tag_block.line_count, Some(157036));
+        assert_eq!(tag_block.source, Some("r003669945".to_string()));
+        
+        assert!(tag_block.grouping.is_some());
+        let grouping = tag_block.grouping.unwrap();
+        assert_eq!(grouping.sentence_number, 1);
+        assert_eq!(grouping.total_sentences, 2);
+        assert_eq!(grouping.group_id, 73874);
+        
+        // The parsed NMEA message should still be valid
+        match nmea_message.message {
+            ParsedMessage::VesselDynamicData(_) => {},
+            _ => panic!("Expected VesselDynamicData message"),
+        }
+    }
+    
+    #[test]
+    fn test_parse_sentence_without_tag_block() {
+        let mut p = NmeaParser::new();
+        let sentence = "!AIVDM,1,1,,B,15N4cJ`005Jrek0H@9n`DW5608EP,0*13";
+        
+        let result = p.parse_sentence_with_tags(sentence);
+        assert!(result.is_ok());
+        
+        let nmea_message = result.unwrap();
+        assert!(nmea_message.tag_block.is_none());
+        
+        // The parsed NMEA message should still be valid
+        match nmea_message.message {
+            ParsedMessage::VesselDynamicData(_) => {},
+            _ => panic!("Expected VesselDynamicData message"),
+        }
+    }
+    
+    #[test]
+    fn test_parse_sentence_backward_compatibility() {
+        let mut p = NmeaParser::new();
+        let sentence_with_tag = r"\c:1241544035*53\!AIVDM,1,1,,B,15N4cJ`005Jrek0H@9n`DW5608EP,0*13";
+        let sentence_without_tag = "!AIVDM,1,1,,B,15N4cJ`005Jrek0H@9n`DW5608EP,0*13";
+        
+        // Both should return the same parsed message when using parse_sentence
+        let result1 = p.parse_sentence(sentence_with_tag);
+        let result2 = p.parse_sentence(sentence_without_tag);
+        
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
+        
+        // Both results should be identical (tag block is ignored in the old API)
+        assert_eq!(result1.unwrap(), result2.unwrap());
+    }
+    
+    #[test]
+    fn test_parse_gnss_sentence_with_tag_block() {
+        let mut p = NmeaParser::new();
+        let sentence = r"\s:station1,t:test*3C\$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A";
+        
+        let result = p.parse_sentence_with_tags(sentence);
+        assert!(result.is_ok());
+        
+        let nmea_message = result.unwrap();
+        assert!(nmea_message.tag_block.is_some());
+        
+        let tag_block = nmea_message.tag_block.unwrap();
+        assert_eq!(tag_block.source, Some("station1".to_string()));
+        assert_eq!(tag_block.text, Some("test".to_string()));
+        
+        // The parsed NMEA message should be RMC data
+        match nmea_message.message {
+            ParsedMessage::Rmc(_) => {},
+            _ => panic!("Expected RMC message"),
+        }
+    }
+    
+    #[test]
+    fn test_parse_invalid_tag_block() {
+        let mut p = NmeaParser::new();
+        
+        // Tag block not properly closed
+        let sentence1 = r"\c:1241544035*53!AIVDM,1,1,,B,15N4cJ`005Jrek0H@9n`DW5608EP,0*13";
+        let result1 = p.parse_sentence_with_tags(sentence1);
+        assert!(result1.is_err());
+        
+        // Invalid checksum in tag block
+        let sentence2 = r"\c:1241544035*FF\!AIVDM,1,1,,B,15N4cJ`005Jrek0H@9n`DW5608EP,0*13";
+        let result2 = p.parse_sentence_with_tags(sentence2);
+        assert!(result2.is_err());
+    }
+    
+    #[test]
+    fn test_tag_block_with_multipart_message() {
+        let mut p = NmeaParser::new();
+        
+        // First part of multipart message with tag block
+        let sentence1 = r"\g:1-2-12345*1B\!AIVDM,2,1,3,B,55P5TL01VIaAL@7WKO@mBplU@<PDhh000000001S;AJ::4A80?4i@E53,0*3E";
+        let result1 = p.parse_sentence_with_tags(sentence1);
+        assert!(result1.is_ok());
+        
+        let nmea_message1 = result1.unwrap();
+        assert!(nmea_message1.tag_block.is_some());
+        assert_eq!(nmea_message1.message, ParsedMessage::Incomplete);
+        
+        // Second part of multipart message with different tag block
+        let sentence2 = r"\g:2-2-12345*1A\!AIVDM,2,2,3,B,1@0000000000000,2*55";
+        let result2 = p.parse_sentence_with_tags(sentence2);
+        assert!(result2.is_ok());
+        
+        let nmea_message2 = result2.unwrap();
+        assert!(nmea_message2.tag_block.is_some());
+        
+        // The second part should complete the message
+        match nmea_message2.message {
+            ParsedMessage::VesselStaticData(_) => {},
+            _ => panic!("Expected VesselStaticData message after completing multipart"),
+        }
+        
+        // Check that grouping information is correctly parsed
+        let tag_block1 = nmea_message1.tag_block.unwrap();
+        let grouping1 = tag_block1.grouping.unwrap();
+        assert_eq!(grouping1.sentence_number, 1);
+        assert_eq!(grouping1.total_sentences, 2);
+        assert_eq!(grouping1.group_id, 12345);
+        
+        let tag_block2 = nmea_message2.tag_block.unwrap();
+        let grouping2 = tag_block2.grouping.unwrap();
+        assert_eq!(grouping2.sentence_number, 2);
+        assert_eq!(grouping2.total_sentences, 2);
+        assert_eq!(grouping2.group_id, 12345);
+    }
+}
+
+/// Parse a single NMEA sentence with tag block support.
+/// This is a convenience function that creates a parser instance and parses the sentence.
+/// For parsing multiple sentences efficiently, use NmeaParser directly.
+pub fn parse_sentence_with_tags(sentence: &str) -> Result<NmeaMessage, ParseError> {
+    let mut parser = NmeaParser::new();
+    parser.parse_sentence_with_tags(sentence)
 }

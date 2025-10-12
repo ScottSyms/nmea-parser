@@ -19,6 +19,15 @@ chrono = { version = "0.4.31", default-features = false, features = ["alloc"] }
 log = "0.4.20"
 hashbrown = "0.14.2"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+glob = "0.3"
+anyhow = "1.0"
 
 [dev-dependencies]
 assert = "0.7.4"
+
+# CLI binary for processing NMEA files
+[[bin]]
+name = "nmea-cli"
+path = "src/bin/nmea-cli.rs"

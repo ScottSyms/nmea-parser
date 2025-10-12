@@ -73,6 +73,36 @@ for sentence in sentences {
 }
 ```
 
+### Tag Block Support
+
+The parser also supports NMEA 4.10 tag blocks, which provide additional metadata:
+
+```rust
+use nmea_parser::*;
+
+let mut parser = NmeaParser::new();
+let sentence_with_tag = r"\g:1-2-73874,n:157036,s:r003669945,c:1241544035*4A\!AIVDM,1,1,,B,15N4cJ`005Jrek0H@9n`DW5608EP,0*13";
+
+match parser.parse_sentence_with_tags(sentence_with_tag)? {
+    nmea_message => {
+        // Access the parsed NMEA data
+        println!("Message: {:?}", nmea_message.message);
+        
+        // Access tag block metadata if present
+        if let Some(tag_block) = nmea_message.tag_block {
+            println!("Timestamp: {:?}", tag_block.timestamp);
+            println!("Source: {:?}", tag_block.source);
+            if let Some(grouping) = tag_block.grouping {
+                println!("Grouping: {}-{}-{}", grouping.sentence_number, 
+                        grouping.total_sentences, grouping.group_id);
+            }
+        }
+    }
+}
+```
+
+For backward compatibility, you can continue using `parse_sentence()` which ignores tag blocks.
+
 The example outputs the following lines:
 
 ```
