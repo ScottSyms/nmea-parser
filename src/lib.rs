@@ -554,59 +554,63 @@ impl NmeaParser {
                 // Try parse the payload
                 let mut bv: Option<BitVec> = None;
                 match fragment_count {
-                    1 => bv = parse_payload(&payload_string).ok(),
-                    2 => {
+                    1 => {
+                        // Single fragment message - parse directly
+                        bv = parse_payload(&payload_string).ok();
+                    }
+                    2..=4 => {
+                        // Multipart message (2-4 fragments)
                         if let Some(msg_id) = message_id {
-                            let key1 = make_fragment_key(
-                                &sentence_type.to_string(),
-                                msg_id,
-                                fragment_count,
-                                1,
-                                radio_channel_code.unwrap_or(""),
-                            );
-                            let key2 = make_fragment_key(
-                                &sentence_type.to_string(),
-                                msg_id,
-                                fragment_count,
-                                2,
-                                radio_channel_code.unwrap_or(""),
-                            );
-                            match fragment_number {
-                                1 => {
-                                    if let Some(p) = self.pull_string(key2) {
-                                        let mut payload_string_combined = payload_string;
-                                        payload_string_combined.push_str(p.as_str());
-                                        bv = parse_payload(&payload_string_combined).ok();
-                                    } else {
-                                        self.push_string(key1, payload_string);
-                                    }
-                                }
-                                2 => {
-                                    if let Some(p) = self.pull_string(key1) {
-                                        let mut payload_string_combined = p;
-                                        payload_string_combined.push_str(payload_string.as_str());
-                                        bv = parse_payload(&payload_string_combined).ok();
-                                    } else {
-                                        self.push_string(key2, payload_string);
-                                    }
-                                }
-                                _ => {
-                                    warn!(
-                                        "Unexpected NMEA fragment number: {}/{}",
-                                        fragment_number, fragment_count
-                                    );
+                            let channel = radio_channel_code.unwrap_or("");
+                            let base_key = format!("{}:{}:{}", sentence_type, msg_id, channel);
+                            
+                            // Store this fragment
+                            let fragment_key = format!("{}:frag_{}", base_key, fragment_number);
+                            self.push_string(fragment_key, payload_string.clone());
+                            
+                            // Check if we have all fragments
+                            let mut all_fragments = Vec::new();
+                            let mut complete = true;
+                            
+                            for frag_num in 1..=fragment_count {
+                                let key = format!("{}:frag_{}", base_key, frag_num);
+                                if let Some(fragment_payload) = self.saved_fragments.get(&key) {
+                                    all_fragments.push((frag_num, fragment_payload.clone()));
+                                } else {
+                                    complete = false;
+                                    break;
                                 }
                             }
+                            
+                            if complete {
+                                // We have all fragments - concatenate them in order
+                                all_fragments.sort_by_key(|(num, _)| *num);
+                                let mut combined_payload = String::new();
+                                
+                                for (_frag_num, payload) in &all_fragments {
+                                    combined_payload.push_str(payload);
+                                }
+                                
+                                // Clean up stored fragments
+                                for frag_num in 1..=fragment_count {
+                                    let key = format!("{}:frag_{}", base_key, frag_num);
+                                    self.saved_fragments.remove(&key);
+                                }
+                                
+                                // Parse the combined payload
+                                bv = parse_payload(&combined_payload).ok();
+                            }
+                            // If not complete, return Incomplete and wait for more fragments
                         } else {
                             warn!(
-                                "NMEA message_id missing from {} than supported 2",
+                                "NMEA message_id missing from multipart message {}",
                                 sentence_type
                             );
                         }
                     }
                     _ => {
                         warn!(
-                            "NMEA sentence fragment count greater ({}) than supported 2",
+                            "NMEA sentence fragment count ({}) exceeds maximum supported (4)",
                             fragment_count
                         );
                     }
@@ -1008,6 +1012,83 @@ mod test {
         assert_eq!(grouping2.sentence_number, 2);
         assert_eq!(grouping2.total_sentences, 2);
         assert_eq!(grouping2.group_id, 12345);
+    }
+
+    #[test]
+    fn test_multipart_message_up_to_4_fragments() {
+        let mut parser = NmeaParser::new();
+        
+        // Test 3-fragment message
+        let line1 = "!AIVDM,3,1,99999,A,85Mwp`1Kf3aCnsNkwThixgKO:D:ED1h,0*0D";
+        let result1 = parser.parse_sentence_with_tags(line1).unwrap();
+        assert_eq!(result1.message, ParsedMessage::Incomplete);
+        
+        let line2 = "!AIVDM,3,2,99999,A,Dn1oP@D0:O=QO8TrGs=s>H?2N,0*54";
+        let result2 = parser.parse_sentence_with_tags(line2).unwrap();
+        assert_eq!(result2.message, ParsedMessage::Incomplete);
+        
+        let line3 = "!AIVDM,3,3,99999,A,@:@L0000000000000,2*36";
+        let result3 = parser.parse_sentence_with_tags(line3).unwrap();
+        
+        // Third fragment should complete the message
+        match result3.message {
+            ParsedMessage::Incomplete => panic!("Expected complete message after 3rd fragment"),
+            _ => {
+                // Success - should be a parsed message (could be any valid type)
+            }
+        }
+        
+        // Test 4-fragment message
+        parser.reset();
+        
+        let line4_1 = "!AIVDM,4,1,88888,A,85Mwp`1Kf3aCnsNkwThixgKO,0*7B";
+        let result4_1 = parser.parse_sentence_with_tags(line4_1).unwrap();
+        assert_eq!(result4_1.message, ParsedMessage::Incomplete);
+        
+        let line4_2 = "!AIVDM,4,2,88888,A,Dn1oP@D0:O=QO8TrGs=s>H,0*1F";
+        let result4_2 = parser.parse_sentence_with_tags(line4_2).unwrap();
+        assert_eq!(result4_2.message, ParsedMessage::Incomplete);
+        
+        let line4_3 = "!AIVDM,4,3,88888,A,?2N@:@L0000000000000,0*0A";
+        let result4_3 = parser.parse_sentence_with_tags(line4_3).unwrap();
+        assert_eq!(result4_3.message, ParsedMessage::Incomplete);
+        
+        let line4_4 = "!AIVDM,4,4,88888,A,000000000000000,2*2F";
+        let result4_4 = parser.parse_sentence_with_tags(line4_4).unwrap();
+        
+        // Fourth fragment should complete the message
+        match result4_4.message {
+            ParsedMessage::Incomplete => panic!("Expected complete message after 4th fragment"),
+            _ => {
+                // Success - should be a parsed message
+            }
+        }
+    }
+
+    #[test]
+    fn test_multipart_out_of_order_fragments() {
+        let mut parser = NmeaParser::new();
+        
+        // Test fragments arriving out of order
+        let line2 = "!AIVDM,3,2,77777,A,Dn1oP@D0:O=QO8TrGs=s>H?2N,0*54";
+        let result2 = parser.parse_sentence_with_tags(line2).unwrap();
+        assert_eq!(result2.message, ParsedMessage::Incomplete);
+        
+        let line3 = "!AIVDM,3,3,77777,A,@:@L0000000000000,2*36";
+        let result3 = parser.parse_sentence_with_tags(line3).unwrap();
+        assert_eq!(result3.message, ParsedMessage::Incomplete);
+        
+        // First fragment arrives last
+        let line1 = "!AIVDM,3,1,77777,A,85Mwp`1Kf3aCnsNkwThixgKO:D:ED1h,0*0D";
+        let result1 = parser.parse_sentence_with_tags(line1).unwrap();
+        
+        // Should complete when all fragments are available
+        match result1.message {
+            ParsedMessage::Incomplete => panic!("Expected complete message when all fragments available"),
+            _ => {
+                // Success - fragments were correctly assembled
+            }
+        }
     }
 }
 
