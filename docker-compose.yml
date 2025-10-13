@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  nmea-parser:
+    build: .
+    image: nmea-parser:latest
+    container_name: nmea-parser
+    environment:
+      # AWS S3 Configuration (optional)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - S3_REGION=us-east-1
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_ENDPOINT=${S3_ENDPOINT:-}  # For MinIO or other S3-compatible storage
+    volumes:
+      # Mount directory for input files
+      - ./data:/app/data:ro
+      # Mount directory for output files  
+      - ./output:/app/output
+    command: >
+      nmea-cli 
+      --input "/app/data/*.nmea" 
+      --output "/app/output/processed.json"
+      --format json 
+      --pretty
+      --stats
+    healthcheck:
+      test: ["CMD", "nmea-cli", "--health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Example with S3 configuration
+  nmea-parser-s3:
+    build: .
+    image: nmea-parser:latest
+    container_name: nmea-parser-s3
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    volumes:
+      - ./data:/app/data:ro
+    command: >
+      nmea-cli 
+      --input "/app/data/*.nmea" 
+      --format parquet
+      --s3-bucket "${S3_BUCKET}"
+      --s3-region "us-east-1"
+      --s3-prefix "nmea-data"
+      --batch-size 5000
+      --stats
+    healthcheck:
+      test: ["CMD", "nmea-cli", "--health-check", "--s3-bucket", "${S3_BUCKET}"]
+      interval: 45s
+      timeout: 15s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    depends_on:
+      - minio  # Optional: if using local MinIO
+
+  # Optional: Local MinIO for S3-compatible storage
+  minio:
+    image: minio/minio:latest
+    container_name: nmea-minio
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+volumes:
+  minio_data:
