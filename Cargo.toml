@@ -23,6 +23,20 @@ serde_json = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 glob = "0.3"
 anyhow = "1.0"
+# WebSocket dependencies
+tokio = { version = "1.0", features = ["full"] }
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+url = "2.4"
+# Parquet and Arrow dependencies
+arrow = "53.0"
+parquet = "53.4"
+datafusion = "42.0"
+# S3 and AWS dependencies  
+aws-config = "1.0"
+aws-sdk-s3 = "1.0"
+# UUID for unique identifiers
+uuid = { version = "1.6", features = ["v7"] }
 
 [dev-dependencies]
 assert = "0.7.4"

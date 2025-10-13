@@ -65,8 +65,7 @@ use hashbrown::HashMap;
 use core::cmp::max;
 use core::str::FromStr;
 
-#[cfg(not(test))]
-use num_traits::float::FloatCore;
+
 
 pub mod ais;
 mod error;
