@@ -42,7 +42,7 @@ pub enum JsonParsedMessage {
         mmsi: u32,
         latitude: Option<f64>,
         longitude: Option<f64>,
-        timestamp: Option<String>,
+        timestamp: Option<i64>,
         message_type: u8,
     },
     // GNSS Messages (simplified for JSON)
@@ -53,7 +53,7 @@ pub enum JsonParsedMessage {
         num_satellites: Option<u8>,
         hdop: Option<f64>,
         altitude: Option<f64>,
-        timestamp: Option<String>,
+        timestamp: Option<i64>,
     },
     Rmc {
         latitude: Option<f64>,
@@ -61,7 +61,7 @@ pub enum JsonParsedMessage {
         speed: Option<f64>,
         course: Option<f64>,
         date: Option<String>,
-        timestamp: Option<String>,
+        timestamp: Option<i64>,
         status: Option<char>,
     },
     // Generic message for unsupported types
@@ -113,7 +113,7 @@ impl From<ParsedMessage> for JsonParsedMessage {
                 mmsi: bsr.mmsi,
                 latitude: bsr.latitude,
                 longitude: bsr.longitude,
-                timestamp: bsr.timestamp.map(|ts| format!("{}", ts)),
+                timestamp: bsr.timestamp.map(|ts| ts.timestamp()),
                 message_type: 4, // Type 4 base station report
             },
             ParsedMessage::Gga(gga) => JsonParsedMessage::Gga {
@@ -123,7 +123,7 @@ impl From<ParsedMessage> for JsonParsedMessage {
                 num_satellites: gga.satellite_count,
                 hdop: gga.hdop,
                 altitude: gga.altitude,
-                timestamp: gga.timestamp.map(|ts| format!("{}", ts)),
+                timestamp: gga.timestamp.map(|ts| ts.timestamp()),
             },
             ParsedMessage::Rmc(rmc) => JsonParsedMessage::Rmc {
                 latitude: rmc.latitude,
@@ -131,7 +131,7 @@ impl From<ParsedMessage> for JsonParsedMessage {
                 speed: rmc.sog_knots,
                 course: rmc.bearing,
                 date: None, // RmcData doesn't have a separate date field in this version
-                timestamp: rmc.timestamp.map(|ts| format!("{}", ts)),
+                timestamp: rmc.timestamp.map(|ts| ts.timestamp()),
                 status: rmc.status_active.map(|active| if active { 'A' } else { 'V' }),
             },
             // For all other message types, create a generic representation
