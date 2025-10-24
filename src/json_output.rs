@@ -6,6 +6,14 @@ use crate::tag_block::TagBlock;
 use serde::{Deserialize, Serialize};
 use alloc::string::{String, ToString};
 use alloc::format;
+use alloc::vec::Vec;
+
+/// Augmentation information for modified/enhanced data
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Augmentation {
+    pub timestamp: i64,
+    pub description: String,
+}
 
 /// Serializable version of NmeaMessage for JSON output
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -13,6 +21,8 @@ pub struct JsonNmeaMessage {
     pub raw_sentence: String,
     pub tag_block: Option<TagBlock>,
     pub message: JsonParsedMessage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub augmentations: Option<Vec<Augmentation>>,
 }
 
 /// Serializable version of ParsedMessage for JSON output
@@ -77,7 +87,13 @@ impl JsonNmeaMessage {
             raw_sentence,
             tag_block,
             message: JsonParsedMessage::from(message),
+            augmentations: None,
         }
+    }
+    
+    pub fn with_augmentations(mut self, augmentations: Vec<Augmentation>) -> Self {
+        self.augmentations = Some(augmentations);
+        self
     }
 }
 

@@ -27,14 +27,20 @@ pub(crate) fn handle(
         station: { station },
         mmsi: { pick_u64(bv, 8, 30) as u32 },
         timestamp: {
-            Some(parse_ymdhs(
-                pick_u64(bv, 38, 14) as i32,
-                pick_u64(bv, 52, 4) as u32,
-                pick_u64(bv, 56, 5) as u32,
-                pick_u64(bv, 61, 5) as u32,
-                pick_u64(bv, 66, 6) as u32,
-                pick_u64(bv, 72, 6) as u32,
-            )?)
+            let year = pick_u64(bv, 38, 14) as i32;
+            let month = pick_u64(bv, 52, 4) as u32;
+            let day = pick_u64(bv, 56, 5) as u32;
+            let hour = pick_u64(bv, 61, 5) as u32;
+            let minute = pick_u64(bv, 66, 6) as u32;
+            let second = pick_u64(bv, 72, 6) as u32;
+            
+            // Check for "not available" values per AIS specification
+            // Year 0, Month 0, Day 0, Hour 24, Minute 60, Second 60 = not available
+            if year == 0 || month == 0 || day == 0 || hour == 24 || minute == 60 || second == 60 {
+                None
+            } else {
+                Some(parse_ymdhs(year, month, day, hour, minute, second)?)
+            }
         },
         high_position_accuracy: { pick_u64(bv, 78, 1) != 0 },
         latitude: {
