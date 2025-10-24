@@ -125,12 +125,9 @@ pub enum ParsedMessage {
 
     /// AIS VDM/VDO type 6
     BinaryAddressedMessage(ais::BinaryAddressedMessage),
-    //
-    //    /// AIS VDM/VDO type 7
-    //    BinaryAcknowledge(ais::BinaryAcknowledge),
-    //
-    //    /// AIS VDM/VDO type 8
-    //    BinaryBroadcastMessage(ais::BinaryBroadcastMessage),
+
+    /// AIS VDM/VDO type 8
+    BinaryBroadcastMessage(ais::BinaryBroadcastMessage),
 
     // AIS VDM/VDO type 9
     StandardSarAircraftPositionReport(ais::StandardSarAircraftPositionReport),
@@ -635,13 +632,7 @@ impl NmeaParser {
                             )))
                         }
                         // Binary broadcast message
-                        8 => {
-                            // TODO: implementation
-                            Err(ParseError::UnsupportedSentenceType(format!(
-                                "Unsupported {} message type: {}",
-                                sentence_type, message_type
-                            )))
-                        }
+                        8 => ais::vdm_t8::handle(&bv, station, own_vessel),
                         // Standard SAR aircraft position report
                         9 => ais::vdm_t9::handle(&bv, station, own_vessel),
                         // UTC and Date inquiry

@@ -55,6 +55,16 @@ pub enum JsonParsedMessage {
         timestamp: Option<i64>,
         message_type: u8,
     },
+    BinaryBroadcastMessage {
+        mmsi: u32,
+        dac: u16,
+        fid: u8,
+        data_hex: String,
+        data_bit_length: usize,
+        message_type: u8,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parsed_payload: Option<serde_json::Value>,
+    },
     // GNSS Messages (simplified for JSON)
     Gga {
         latitude: Option<f64>,
@@ -131,6 +141,27 @@ impl From<ParsedMessage> for JsonParsedMessage {
                 longitude: bsr.longitude,
                 timestamp: bsr.timestamp.map(|ts| ts.timestamp()),
                 message_type: 4, // Type 4 base station report
+            },
+            ParsedMessage::BinaryBroadcastMessage(bbm) => {
+                // Convert binary data to hex string
+                let data_hex = bbm.data.iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<Vec<_>>()
+                    .join("");
+                
+                // Convert parsed payload to JSON value if present
+                let parsed_payload = bbm.parsed_payload.as_ref()
+                    .and_then(|payload| serde_json::to_value(payload).ok());
+                
+                JsonParsedMessage::BinaryBroadcastMessage {
+                    mmsi: bbm.mmsi,
+                    dac: bbm.dac,
+                    fid: bbm.fid,
+                    data_hex,
+                    data_bit_length: bbm.data_bit_length,
+                    message_type: 8, // Type 8 binary broadcast
+                    parsed_payload,
+                }
             },
             ParsedMessage::Gga(gga) => JsonParsedMessage::Gga {
                 latitude: gga.latitude,
