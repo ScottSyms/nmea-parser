@@ -38,6 +38,12 @@ aws-types = "1.0"
 uuid = { version = "1.6", features = ["v7"] }
 # Async utilities
 futures = "0.3"
+# Apache Iceberg dependencies
+iceberg = "0.3"
+iceberg-catalog-rest = "0.3"
+# iceberg-catalog-hms = "0.3"  # Commented out due to compilation issues
+object_store = "0.11"
+url = "2.5"
 
 [dev-dependencies]
 assert = "0.7.4"
