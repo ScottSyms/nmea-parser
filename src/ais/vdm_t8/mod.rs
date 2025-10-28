@@ -64,9 +64,6 @@ pub struct BinaryBroadcastMessage {
     
     /// Actual number of valid bits in the data field
     pub data_bit_length: usize,
-    
-    /// Parsed payload data (if DAC/FID combination is supported)
-    pub parsed_payload: Option<Type8Payload>,
 }
 
 impl LatLon for BinaryBroadcastMessage {
@@ -135,13 +132,6 @@ pub(crate) fn handle(
             data.push(byte_val);
         }
     }
-    
-    // Try to parse the payload based on DAC/FID
-    let parsed_payload = if data_bit_length > 0 {
-        vdm_t8_payloads::parse_payload(dac, fid, bv, 56)
-    } else {
-        None
-    };
 
     Ok(ParsedMessage::BinaryBroadcastMessage(
         BinaryBroadcastMessage {
@@ -152,7 +142,6 @@ pub(crate) fn handle(
             fid,
             data,
             data_bit_length,
-            parsed_payload,
         },
     ))
 }

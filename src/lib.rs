@@ -345,12 +345,14 @@ impl NmeaParser {
     /// a multipart message the related state is saved into the parser and
     /// `ParsedMessage::Incomplete` is returned. The actual result is returned when all the parts
     /// have been sent to the parser.
+    #[inline]
     pub fn parse_sentence(&mut self, sentence: &str) -> Result<ParsedMessage, ParseError> {
         let result = self.parse_sentence_with_tags(sentence)?;
         Ok(result.message)
     }
 
     /// Internal function to parse the actual NMEA sentence (without tag blocks)
+    #[inline]
     fn parse_sentence_internal(&mut self, sentence: &str) -> Result<ParsedMessage, ParseError> {
         // Shed characters prefixing the message if they exist
         let sentence = {
@@ -366,32 +368,43 @@ impl NmeaParser {
 
         // Calculate NMEA checksum and compare it to the given one. Also, remove the checksum part
         // from the sentence to simplify next processing steps.
-        let mut checksum = 0;
         let (sentence, checksum_hex_given) = {
             if let Some(pos) = sentence.rfind('*') {
                 if pos + 3 <= sentence.len() {
                     (
-                        sentence[0..pos].to_string(),
-                        sentence[(pos + 1)..(pos + 3)].to_string(),
+                        &sentence[0..pos],
+                        &sentence[(pos + 1)..(pos + 3)],
                     )
                 } else {
                     debug!("Invalid checksum found for sentence: {}", sentence);
-                    (sentence[0..pos].to_string(), "".to_string())
+                    (&sentence[0..pos], "")
                 }
             } else {
                 debug!("No checksum found for sentence: {}", sentence);
-                (sentence.to_string(), "".to_string())
+                (sentence, "")
             }
         };
-        for c in sentence.as_str().chars().skip(1) {
-            checksum ^= c as u8;
-        }
-        let checksum_hex_calculated = format!("{:02X?}", checksum);
-        if checksum_hex_calculated != checksum_hex_given && !checksum_hex_given.is_empty() {
-            return Err(ParseError::CorruptedSentence(format!(
-                "Corrupted NMEA sentence: {:02X?} != {:02X?}",
-                checksum_hex_calculated, checksum_hex_given
-            )));
+        
+        // Only validate checksum if one was provided
+        if !checksum_hex_given.is_empty() {
+            let mut checksum = 0u8;
+            for b in sentence.bytes().skip(1) {
+                checksum ^= b;
+            }
+            
+            // Parse the hex checksum directly without allocating
+            let expected_checksum = u8::from_str_radix(checksum_hex_given, 16)
+                .map_err(|_| ParseError::CorruptedSentence(format!(
+                    "Invalid checksum format: {}",
+                    checksum_hex_given
+                )))?;
+            
+            if checksum != expected_checksum {
+                return Err(ParseError::CorruptedSentence(format!(
+                    "Corrupted NMEA sentence: \"{:02X?}\" != \"{:02X?}\"",
+                    checksum, expected_checksum
+                )));
+            }
         }
 
         // Pick sentence type
@@ -406,15 +419,14 @@ impl NmeaParser {
             }
         };
 
-        // Validate sentence type characters
-        if !sentence_type
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '$' || c == '!')
-        {
-            return Err(ParseError::InvalidSentence(format!(
-                "Invalid characters in sentence type: {}",
-                sentence_type
-            )));
+        // Validate sentence type characters (using bytes is faster than chars)
+        for &b in sentence_type.as_bytes() {
+            if !b.is_ascii_alphanumeric() && b != b'$' && b != b'!' {
+                return Err(ParseError::InvalidSentence(format!(
+                    "Invalid characters in sentence type: {}",
+                    sentence_type
+                )));
+            }
         }
 
         let (nav_system, station, sentence_type) = if sentence_type.starts_with('$') {
@@ -422,14 +434,14 @@ impl NmeaParser {
             let nav_system = gnss::NavigationSystem::from_str(
                 sentence_type
                     .get(1..)
-                    .ok_or(ParseError::CorruptedSentence("Empty String".to_string()))?,
+                    .ok_or_else(|| ParseError::CorruptedSentence("Empty String".into()))?,
             )?;
             let sentence_type = if !sentence_type.starts_with('P') && sentence_type.len() == 6 {
                 format!(
                     "${}",
                     sentence_type
                         .get(3..6)
-                        .ok_or(ParseError::InvalidSentence(format!(
+                        .ok_or_else(|| ParseError::InvalidSentence(format!(
                             "{sentence_type} is too short."
                         )))?
                 )
@@ -442,7 +454,7 @@ impl NmeaParser {
             let station = ais::Station::from_str(
                 sentence_type
                     .get(1..)
-                    .ok_or(ParseError::CorruptedSentence("Empty String".to_string()))?,
+                    .ok_or_else(|| ParseError::CorruptedSentence("Empty String".into()))?,
             )?;
             let sentence_type = if sentence_type.len() == 6 {
                 format!(
@@ -468,31 +480,31 @@ impl NmeaParser {
         // Handle sentence types
         match sentence_type.as_str() {
             // $xxGGA - Global Positioning System Fix Data
-            "$GGA" => gnss::gga::handle(sentence.as_str(), nav_system),
+            "$GGA" => gnss::gga::handle(sentence, nav_system),
             // $xxRMC - Recommended minimum specific GPS/Transit data
-            "$RMC" => gnss::rmc::handle(sentence.as_str(), nav_system),
+            "$RMC" => gnss::rmc::handle(sentence, nav_system),
             // $xxGNS - GNSS fix data
-            "$GNS" => gnss::gns::handle(sentence.as_str(), nav_system),
+            "$GNS" => gnss::gns::handle(sentence, nav_system),
             // $xxGSA - GPS DOP and active satellites
-            "$GSA" => gnss::gsa::handle(sentence.as_str(), nav_system),
+            "$GSA" => gnss::gsa::handle(sentence, nav_system),
             // $xxGSV - GPS Satellites in view
-            "$GSV" => gnss::gsv::handle(sentence.as_str(), nav_system, self),
+            "$GSV" => gnss::gsv::handle(sentence, nav_system, self),
             // $xxVTG - Track made good and ground speed
-            "$VTG" => gnss::vtg::handle(sentence.as_str(), nav_system),
+            "$VTG" => gnss::vtg::handle(sentence, nav_system),
             // $xxGLL - Geographic position, latitude / longitude
-            "$GLL" => gnss::gll::handle(sentence.as_str(), nav_system),
+            "$GLL" => gnss::gll::handle(sentence, nav_system),
             // $xxALM - Almanac Data
-            "$ALM" => gnss::alm::handle(sentence.as_str(), nav_system),
+            "$ALM" => gnss::alm::handle(sentence, nav_system),
             // $xxDTM - Datum reference
-            "$DTM" => gnss::dtm::handle(sentence.as_str(), nav_system),
+            "$DTM" => gnss::dtm::handle(sentence, nav_system),
             // $xxMSS - MSK receiver signal
-            "$MSS" => gnss::mss::handle(sentence.as_str(), nav_system),
+            "$MSS" => gnss::mss::handle(sentence, nav_system),
             // $xxSTN - Multiple Data ID
-            "$STN" => gnss::stn::handle(sentence.as_str(), nav_system),
+            "$STN" => gnss::stn::handle(sentence, nav_system),
             // $xxVBW - MSK Receiver Signal
-            "$VBW" => gnss::vbw::handle(sentence.as_str(), nav_system),
+            "$VBW" => gnss::vbw::handle(sentence, nav_system),
             // $xxZDA - Date and time
-            "$ZDA" => gnss::zda::handle(sentence.as_str(), nav_system),
+            "$ZDA" => gnss::zda::handle(sentence, nav_system),
 
             // Received AIS data from other or own vessel
             "!VDM" | "!VDO" => {
@@ -558,20 +570,38 @@ impl NmeaParser {
                         // Multipart message (2-4 fragments)
                         if let Some(msg_id) = message_id {
                             let channel = radio_channel_code.unwrap_or("");
-                            let base_key = format!("{}:{}:{}", sentence_type, msg_id, channel);
                             
-                            // Store this fragment
-                            let fragment_key = format!("{}:frag_{}", base_key, fragment_number);
+                            // Build base key once and reuse it
+                            // Using a buffer to avoid multiple format! allocations
+                            let mut base_key = String::with_capacity(32);
+                            base_key.push_str(sentence_type.as_str());
+                            base_key.push(':');
+                            use core::fmt::Write;
+                            let _ = write!(&mut base_key, "{}", msg_id);
+                            base_key.push(':');
+                            base_key.push_str(channel);
+                            
+                            // Store this fragment - reuse base_key string
+                            let mut fragment_key = base_key.clone();
+                            fragment_key.push_str(":frag_");
+                            let _ = write!(&mut fragment_key, "{}", fragment_number);
                             self.push_string(fragment_key, payload_string.clone());
                             
-                            // Check if we have all fragments
-                            let mut all_fragments = Vec::new();
+                            // Check if we have all fragments and build combined payload more efficiently
                             let mut complete = true;
+                            let mut combined_payload = String::new();
+                            
+                            // Pre-allocate estimated capacity to avoid reallocation
+                            // Estimate based on current fragment size
+                            combined_payload.reserve(payload_string.len() * fragment_count as usize);
                             
                             for frag_num in 1..=fragment_count {
-                                let key = format!("{}:frag_{}", base_key, frag_num);
+                                let mut key = base_key.clone();
+                                key.push_str(":frag_");
+                                let _ = write!(&mut key, "{}", frag_num);
+                                
                                 if let Some(fragment_payload) = self.saved_fragments.get(&key) {
-                                    all_fragments.push((frag_num, fragment_payload.clone()));
+                                    combined_payload.push_str(fragment_payload);
                                 } else {
                                     complete = false;
                                     break;
@@ -579,17 +609,11 @@ impl NmeaParser {
                             }
                             
                             if complete {
-                                // We have all fragments - concatenate them in order
-                                all_fragments.sort_by_key(|(num, _)| *num);
-                                let mut combined_payload = String::new();
-                                
-                                for (_frag_num, payload) in &all_fragments {
-                                    combined_payload.push_str(payload);
-                                }
-                                
                                 // Clean up stored fragments
                                 for frag_num in 1..=fragment_count {
-                                    let key = format!("{}:frag_{}", base_key, frag_num);
+                                    let mut key = base_key.clone();
+                                    key.push_str(":frag_");
+                                    let _ = write!(&mut key, "{}", frag_num);
                                     self.saved_fragments.remove(&key);
                                 }
                                 
@@ -680,12 +704,12 @@ impl NmeaParser {
                     Ok(ParsedMessage::Incomplete)
                 }
             }
-            "$DPT" => gnss::dpt::handle(sentence.as_str()),
-            "$DBS" => gnss::dbs::handle(sentence.as_str()),
-            "$MTW" => gnss::mtw::handle(sentence.as_str()),
-            "$VHW" => gnss::vhw::handle(sentence.as_str()),
-            "$HDT" => gnss::hdt::handle(sentence.as_str()),
-            "$MWV" => gnss::mwv::handle(sentence.as_str()),
+            "$DPT" => gnss::dpt::handle(sentence),
+            "$DBS" => gnss::dbs::handle(sentence),
+            "$MTW" => gnss::mtw::handle(sentence),
+            "$VHW" => gnss::vhw::handle(sentence),
+            "$HDT" => gnss::hdt::handle(sentence),
+            "$MWV" => gnss::mwv::handle(sentence),
             _ => Err(ParseError::UnsupportedSentenceType(format!(
                 "Unsupported sentence type: {}",
                 sentence_type

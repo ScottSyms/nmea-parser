@@ -32,8 +32,12 @@ datafusion = "42.0"
 # S3 and AWS dependencies  
 aws-config = "1.0"
 aws-sdk-s3 = "1.0"
+aws-credential-types = "1.0"
+aws-types = "1.0"
 # UUID for unique identifiers
 uuid = { version = "1.6", features = ["v7"] }
+# Async utilities
+futures = "0.3"
 
 [dev-dependencies]
 assert = "0.7.4"
@@ -42,3 +46,21 @@ assert = "0.7.4"
 [[bin]]
 name = "nmea-cli"
 path = "src/bin/nmea-cli.rs"
+
+[profile.release]
+# Enable Link Time Optimization for better inlining across crates
+lto = "fat"
+# Single codegen unit for better optimization (slower compile, faster runtime)
+codegen-units = 1
+# Strip symbols to reduce binary size
+strip = true
+# Optimize for speed
+opt-level = 3
+# Panic strategy for smaller binaries
+panic = "abort"
+
+[profile.bench]
+# Inherit from release but keep debug info for profiling
+inherits = "release"
+strip = false
+debug = true

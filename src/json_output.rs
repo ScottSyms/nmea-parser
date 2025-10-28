@@ -62,8 +62,6 @@ pub enum JsonParsedMessage {
         data_hex: String,
         data_bit_length: usize,
         message_type: u8,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        parsed_payload: Option<serde_json::Value>,
     },
     // GNSS Messages (simplified for JSON)
     Gga {
@@ -149,10 +147,6 @@ impl From<ParsedMessage> for JsonParsedMessage {
                     .collect::<Vec<_>>()
                     .join("");
                 
-                // Convert parsed payload to JSON value if present
-                let parsed_payload = bbm.parsed_payload.as_ref()
-                    .and_then(|payload| serde_json::to_value(payload).ok());
-                
                 JsonParsedMessage::BinaryBroadcastMessage {
                     mmsi: bbm.mmsi,
                     dac: bbm.dac,
@@ -160,7 +154,6 @@ impl From<ParsedMessage> for JsonParsedMessage {
                     data_hex,
                     data_bit_length: bbm.data_bit_length,
                     message_type: 8, // Type 8 binary broadcast
-                    parsed_payload,
                 }
             },
             ParsedMessage::Gga(gga) => JsonParsedMessage::Gga {
