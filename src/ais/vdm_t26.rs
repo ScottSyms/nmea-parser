@@ -55,6 +55,8 @@ pub(crate) fn handle(
 ) -> Result<ParsedMessage, ParseError> {
     let addressed = pick_u64(bv, 38, 1) != 0;
     let structured = pick_u64(bv, 39, 1) != 0;
+    // Radio status is the last 20 bits; the data field ends where it begins.
+    let radio_index = bv.len().saturating_sub(20);
 
     Ok(ParsedMessage::MultipleSlotBinaryMessage(
         MultipleSlotBinaryMessage {
@@ -79,14 +81,14 @@ pub(crate) fn handle(
             },
             data: {
                 if addressed {
-                    BitVec::from_bitslice(&bv[70..max(70, bv.len() - 20)])
+                    pick_bits(bv, 70, radio_index)
                 } else if structured {
-                    BitVec::from_bitslice(&bv[86..max(86, bv.len() - 20)])
+                    pick_bits(bv, 86, radio_index)
                 } else {
-                    BitVec::from_bitslice(&bv[40..max(40, bv.len() - 20)])
+                    pick_bits(bv, 40, radio_index)
                 }
             },
-            radio: { pick_u64(bv, bv.len() - 20, 20) as u32 },
+            radio: { pick_u64(bv, radio_index, 20) as u32 },
         },
     ))
 }
@@ -145,6 +147,21 @@ mod test {
             Err(e) => {
                 assert_eq!(e.to_string(), "OK");
             }
+        }
+    }
+
+    #[test]
+    fn test_parse_vdm_type26_truncated() {
+        let mut p = NmeaParser::new();
+
+        // Shorter than the header plus radio status (36 bits; the last two MMSI bits are missing)
+        match p.parse_sentence("!AIVDM,1,1,,A,J1mg=5,0*5F") {
+            Ok(ParsedMessage::MultipleSlotBinaryMessage(msbm)) => {
+                assert_eq!(msbm.mmsi, 123456788);
+                assert!(msbm.data.is_empty());
+            }
+            Ok(_) => assert!(false),
+            Err(e) => assert_eq!(e.to_string(), "OK"),
         }
     }
 }

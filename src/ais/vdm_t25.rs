@@ -76,11 +76,11 @@ pub(crate) fn handle(
             },
             data: {
                 if addressed {
-                    BitVec::from_bitslice(&bv[70..max(70, bv.len())])
+                    pick_bits(bv, 70, bv.len())
                 } else if structured {
-                    BitVec::from_bitslice(&bv[86..max(86, bv.len())])
+                    pick_bits(bv, 86, bv.len())
                 } else {
-                    BitVec::from_bitslice(&bv[40..max(40, bv.len())])
+                    pick_bits(bv, 40, bv.len())
                 }
             },
         },
@@ -163,6 +163,27 @@ mod test {
             }
             Err(e) => {
                 assert_eq!(e.to_string(), "OK");
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_vdm_type25_truncated() {
+        let mut p = NmeaParser::new();
+
+        // Addressed and structured messages cut off before the data field (48 bits)
+        for (sentence, dest_mmsi) in [
+            ("!AIVDM,1,1,,A,I1mg=5H0,0*24", Some(0)),
+            ("!AIVDM,1,1,,A,I1mg=5D0,0*28", None),
+        ] {
+            match p.parse_sentence(sentence) {
+                Ok(ParsedMessage::SingleSlotBinaryMessage(ssbm)) => {
+                    assert_eq!(ssbm.mmsi, 123456789);
+                    assert_eq!(ssbm.dest_mmsi, dest_mmsi);
+                    assert!(ssbm.data.is_empty());
+                }
+                Ok(_) => assert!(false),
+                Err(e) => assert_eq!(e.to_string(), "OK"),
             }
         }
     }

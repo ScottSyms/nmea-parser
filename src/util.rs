@@ -83,6 +83,17 @@ pub(crate) fn pick_i64(bv: &BitVec, index: usize, len: usize) -> i64 {
     }
 }
 
+/// Pick bits `index..end` from `BitVec` as a new `BitVec`. Bits beyond the end of `bv` are
+/// left out, so a truncated message yields a shorter (possibly empty) result instead of a panic.
+pub(crate) fn pick_bits(bv: &BitVec, index: usize, end: usize) -> BitVec {
+    let end = end.min(bv.len());
+    if index >= end {
+        BitVec::new()
+    } else {
+        BitVec::from_bitslice(&bv[index..end])
+    }
+}
+
 /// Pick a string from BitVec. Field `char_count` defines string length in characters.
 /// Characters consist of 6 bits.
 pub(crate) fn pick_string(bv: &BitVec, index: usize, char_count: usize) -> String {
